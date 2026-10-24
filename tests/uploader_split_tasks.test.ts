@@ -35,9 +35,10 @@ function shardNode(
     } as unknown as StorageNode
 }
 
-// The file-relative segment each task starts at, grouped by node in the
-// order the nodes were given.
-async function taskStartsPerNode(
+// The file-relative segments each node is sent, grouped by node in the order
+// the nodes were given. Like Uploader.uploadTask, a task covers taskSize
+// segments numShard apart, stopping after the file's last segment.
+async function segmentsPerNode(
     shards: number[][],
     info: FileInfo,
     taskSize: number
@@ -53,11 +54,18 @@ async function taskStartsPerNode(
         throw new Error('splitTasks returned null')
     }
 
+    const numSegments = Math.ceil(info.tx.size / SEGMENT_SIZE)
     const perNode: number[][] = nodes.map(() => [])
     for (const task of tasks) {
-        perNode[task.clientIndex].push(task.segIndex)
+        for (let i = 0; i < task.taskSize; i++) {
+            const segIndex = task.segIndex + i * task.numShard
+            if (segIndex >= numSegments) {
+                break
+            }
+            perNode[task.clientIndex].push(segIndex)
+        }
     }
-    return perNode.map((starts) => starts.sort((a, b) => a - b))
+    return perNode.map((segs) => segs.sort((a, b) => a - b))
 }
 
 describe('Uploader.splitTasks', () => {
@@ -101,6 +109,7 @@ describe('Uploader.splitTasks', () => {
                 [0, 2, 4],
             ],
         },
+        // The Galileo upload from #59, at its real startEntryIndex.
         {
             name: '1 MiB + 50 B, whose last segment is a single chunk',
             shards: [
@@ -153,13 +162,32 @@ describe('Uploader.splitTasks', () => {
             startEntryIndex: 0,
             size: 5 * SEGMENT_SIZE,
             taskSize: 2,
-            want: [[0, 4], [1]],
+            want: [
+                [0, 2, 4],
+                [1, 3],
+            ],
+        },
+        {
+            name: 'an unsharded node next to a 2-shard pair',
+            shards: [
+                [0, 1],
+                [0, 2],
+                [1, 2],
+            ],
+            startEntryIndex: 0,
+            size: 4 * SEGMENT_SIZE,
+            taskSize: 1,
+            want: [
+                [0, 1, 2, 3],
+                [0, 2],
+                [1, 3],
+            ],
         },
     ])(
-        'sends every node all of its shard: $name',
+        'sends every node every segment of its shard: $name',
         async ({ shards, startEntryIndex, size, taskSize, want }) => {
             expect(
-                await taskStartsPerNode(
+                await segmentsPerNode(
                     shards,
                     fileInfo(startEntryIndex, size),
                     taskSize
