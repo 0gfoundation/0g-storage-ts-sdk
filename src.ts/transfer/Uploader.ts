@@ -580,7 +580,9 @@ export class Uploader {
 
         var tasks: UploadTask[] = []
         if (uploadTasks.length > 0) {
-            uploadTasks.sort((a, b) => a.length - b.length)
+            // Longest first: both loops below stop at the first list that runs
+            // out, so a shorter list in front would cut off the others' tails.
+            uploadTasks.sort((a, b) => b.length - a.length)
             for (
                 let taskIndex = 0;
                 taskIndex < uploadTasks[0].length;
